@@ -59,10 +59,10 @@ class RpcApi:
     RPC_ID = 0
     START_TIME = 0
 
-    def __init__(self, auth_provider, device_info):
+    def __init__(self, auth_provider, device_info,client=None):
 
         self.log = logging.getLogger(__name__)
-
+        self.client=client
         self._auth_provider = auth_provider
 
         # mystical unknown6 - resolved by PokemonGoDev
@@ -175,7 +175,7 @@ class RpcApi:
         request = RequestEnvelope()
         request.status_code = 2
         request.request_id = self.get_rpc_id()
-        request.accuracy = random.choice((5, 5, 5, 10, 10, 30, 50, 65))
+        request.accuracy = self.client.get_request_accuracy()
 
         if player_position:
             request.latitude, request.longitude, altitude = player_position
@@ -211,77 +211,9 @@ class RpcApi:
             sig.timestamp_ms_since_start = get_time(ms=True) - RpcApi.START_TIME
             if sig.timestamp_ms_since_start < 50:
                 sig.timestamp_ms_since_start = random.randint(50, 100)
-
-            loc = sig.location_updates.add()
-            sen = sig.sensor_updates.add()
-
-            if sig.timestamp_ms_since_start < 1000:
-                loc.timestamp_ms = random.randint(-4096, sig.timestamp_ms_since_start - 50)
-                sen.timestamp = random.randint(1, sig.timestamp_ms_since_start - 48)
-            else:
-                sen.timestamp = random.randint(sig.timestamp_ms_since_start - 1000, sig.timestamp_ms_since_start - 50)
-                if sig.timestamp_ms_since_start < 30000:
-                    # do not create negative values after 30 seconds have passed
-                    loc.timestamp_ms = random.randint(1, sig.timestamp_ms_since_start - 50)
-                else:
-                    loc.timestamp_ms = random.randint(sig.timestamp_ms_since_start - 30000, sig.timestamp_ms_since_start - 100)
-
-            loc.name = 'fused'
-            loc.latitude = request.latitude
-            loc.longitude = request.longitude
             
-            if not altitude:
-                loc.altitude = random.uniform(300, 400)
-            else:
-                loc.altitude = altitude
-
-            if random.random() > .95:
-                # no reading for roughly 1 in 20 updates
-                loc.device_course = -1
-                loc.device_speed = -1
-            else:
-                loc.device_course = random.uniform(0, 360)
-                loc.device_speed = random.triangular(0.1, 3.1, .8)
-
-            loc.provider_status = 3
-            loc.location_type = 1
-            loc.horizontal_accuracy = request.accuracy
-            if request.accuracy == 65:
-                loc.vertical_accuracy = random.triangular(50, 200, 65)
-            else:
-                if request.accuracy > 10:
-                    vertical_accuracies = (24, 32, 64, 96)
-                else:
-                    vertical_accuracies = (3, 4, 6, 8, 12, 24)
-                loc.vertical_accuracy = random.choice(vertical_accuracies)
-
-            sen.acceleration_x = random.triangular(-3, 3, 0)
-            sen.acceleration_y = random.triangular(-3, 3, sen.acceleration_x * -1)
-            sen.acceleration_z = random.triangular(-4, 4, sen.acceleration_x * -1)
-            sen.magnetic_field_x = random.triangular(-60, 60, 0)
-            sen.magnetic_field_y = random.triangular(-60, 60, sen.magnetic_field_x * -1)
-            sen.magnetic_field_z = random.triangular(-60, 60, sen.magnetic_field_x * -1)
-            sen.magnetic_field_accuracy = random.choice((-1, 1, 1, 2, 2))
-            sen.attitude_pitch = random.triangular(-.6, 1.5, 0.5)
-            sen.attitude_yaw = random.uniform(-3, 3)
-            sen.attitude_roll = random.triangular(-1.5, 1.5, 0.25)
-            sen.rotation_rate_x = random.triangular(-6, 6, 0)
-            sen.rotation_rate_y = random.triangular(-6, 6, sen.rotation_rate_x * -1)
-            sen.rotation_rate_z = random.triangular(-4, 4, sen.rotation_rate_x * .65)
-            sen.gravity_x = random.triangular(-.99, .99, 0)
-            sen.gravity_y = random.triangular(-.99, .8, sen.gravity_x * -.8)
-            sen.gravity_z = random.triangular(-1,- 0.01, -0.8)
-            sen.status = 3
-
-            sig.field25 = 7363665268261373700
-
-            if self.device_info:
-                for key in self.device_info:
-                    setattr(sig.device_info, key, self.device_info[key])
-                if self.device_info['device_brand'] == 'Apple':
-                    sig.ios_device_info.bool5 = True
-            else:
-                sig.ios_device_info.bool5 = True
+            
+            self.client.fill_signal(self,sig,request,player_position)
 
             signal_agglom_proto = sig.SerializeToString()
 
@@ -291,6 +223,7 @@ class RpcApi:
             plat.type = 6
             plat.request_message = sig_request.SerializeToString()
 
+    
         request.ms_since_last_locationfix = int(random.triangular(100, 10000, 1000))
 
         self.log.debug('Generated protobuf request: \n\r%s', request)

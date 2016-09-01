@@ -29,6 +29,7 @@ import re
 import six
 import logging
 import requests
+import random
 
 from . import __title__, __version__, __copyright__
 from pgoapi.rpc_api import RpcApi
@@ -42,11 +43,103 @@ from POGOProtos.Networking.Requests.RequestType_pb2 import RequestType
 
 logger = logging.getLogger(__name__)
 
+"""
+Default Client data: iOS by github.com/noctem
+"""
+class DefaultClient:
+    def __init__(self):
+        pass
+        
+    def get_user_agent(self):
+        return 'Niantic App'
+        
+    def log_position(self,lat,lng,alt):
+        pass
+    
+    def get_request_accuracy(self):
+        return random.choice((5, 5, 5, 10, 10, 30, 50, 65))
+    def fill_signal(self,api,sig,request,player_position):
+        if player_position:
+            altitude = player_position[2]
+        loc = sig.location_updates.add()
+        sen = sig.sensor_updates.add()
 
+        if sig.timestamp_ms_since_start < 1000:
+            loc.timestamp_ms = random.randint(-4096, sig.timestamp_ms_since_start - 50)
+            sen.timestamp = random.randint(1, sig.timestamp_ms_since_start - 48)
+        else:
+            sen.timestamp = random.randint(sig.timestamp_ms_since_start - 1000, sig.timestamp_ms_since_start - 50)
+            if sig.timestamp_ms_since_start < 30000:
+                # do not create negative values after 30 seconds have passed
+                loc.timestamp_ms = random.randint(1, sig.timestamp_ms_since_start - 50)
+            else:
+                loc.timestamp_ms = random.randint(sig.timestamp_ms_since_start - 30000, sig.timestamp_ms_since_start - 100)
+
+        loc.name = 'fused'
+        loc.latitude = request.latitude
+        loc.longitude = request.longitude
+        
+        if not altitude:
+            loc.altitude = random.uniform(300, 400)
+        else:
+            loc.altitude = altitude
+
+        if random.random() > .95:
+            # no reading for roughly 1 in 20 updates
+            loc.device_course = -1
+            loc.device_speed = -1
+        else:
+            loc.device_course = random.uniform(0, 360)
+            loc.device_speed = random.triangular(0.1, 3.1, .8)
+
+        loc.provider_status = 3
+        loc.location_type = 1
+        loc.horizontal_accuracy = request.accuracy
+        if request.accuracy == 65:
+            loc.vertical_accuracy = random.triangular(50, 200, 65)
+        else:
+            if request.accuracy > 10:
+                vertical_accuracies = (24, 32, 64, 96)
+            else:
+                vertical_accuracies = (3, 4, 6, 8, 12, 24)
+            loc.vertical_accuracy = random.choice(vertical_accuracies)
+
+        sen.acceleration_x = random.triangular(-3, 3, 0)
+        sen.acceleration_y = random.triangular(-3, 3, sen.acceleration_x * -1)
+        sen.acceleration_z = random.triangular(-4, 4, sen.acceleration_x * -1)
+        sen.magnetic_field_x = random.triangular(-60, 60, 0)
+        sen.magnetic_field_y = random.triangular(-60, 60, sen.magnetic_field_x * -1)
+        sen.magnetic_field_z = random.triangular(-60, 60, sen.magnetic_field_x * -1)
+        sen.magnetic_field_accuracy = random.choice((-1, 1, 1, 2, 2))
+        sen.attitude_pitch = random.triangular(-.6, 1.5, 0.5)
+        sen.attitude_yaw = random.uniform(-3, 3)
+        sen.attitude_roll = random.triangular(-1.5, 1.5, 0.25)
+        sen.rotation_rate_x = random.triangular(-6, 6, 0)
+        sen.rotation_rate_y = random.triangular(-6, 6, sen.rotation_rate_x * -1)
+        sen.rotation_rate_z = random.triangular(-4, 4, sen.rotation_rate_x * .65)
+        sen.gravity_x = random.triangular(-.99, .99, 0)
+        sen.gravity_y = random.triangular(-.99, .8, sen.gravity_x * -.8)
+        sen.gravity_z = random.triangular(-1,- 0.01, -0.8)
+        sen.status = 3
+
+        sig.field25 = 7363665268261373700
+
+        if api.device_info:
+            for key in api.device_info:
+                setattr(api.device_info, key, api.device_info[key])
+            if api.device_info['device_brand'] == 'Apple':
+                sig.ios_device_info.bool5 = True
+        else:
+            sig.ios_device_info.bool5 = True
+            
+            
 class PGoApi:
 
-    def __init__(self, provider=None, oauth2_refresh_token=None, username=None, password=None, position_lat=None, position_lng=None, position_alt=None, proxy_config=None, device_info=None):
+    def __init__(self, provider=None, oauth2_refresh_token=None, username=None, password=None, 
+                 position_lat=None, position_lng=None, position_alt=None, proxy_config=None, 
+                 device_info=None, client=DefaultClient()):
         self.set_logger()
+        self.client=client
         self.log.info('%s v%s - %s', __title__, __version__, __copyright__)
 
         self._auth_provider = None
@@ -62,7 +155,10 @@ class PGoApi:
         self._signature_lib = None
 
         self._session = requests.session()
-        self._session.headers.update({'User-Agent': 'Niantic App'})
+        ua=self.client.get_user_agent()
+        self.log.debug('Setting user-agent to: %',ua)
+        self._session.headers.update({'User-Agent': ua})
+        
         self._session.verify = True
 
         if proxy_config is not None:
@@ -101,10 +197,10 @@ class PGoApi:
 
     def set_position(self, lat, lng, alt=None):
         self.log.debug('Set Position - Lat: %s Long: %s Alt: %s', lat, lng, alt)
-
         self._position_lat = lat
         self._position_lng = lng
         self._position_alt = alt
+        self.client.log_position(lat,lng,alt)
 
     def set_proxy(self, proxy_config):
         self._session.proxies = proxy_config
@@ -224,7 +320,7 @@ class PGoApiRequest:
             self.log.info('Not logged in')
             raise NotLoggedInException()
 
-        request = RpcApi(self._auth_provider, self.device_info)
+        request = RpcApi(self._auth_provider, self.device_info,self.__parent__.client)
         request._session = self.__parent__._session
 
         lib_path = self.__parent__.get_signature_lib()
@@ -316,3 +412,6 @@ class PGoApiRequest:
             return function
         else:
             raise AttributeError
+
+
+    
