@@ -196,6 +196,8 @@ class RpcApi:
             request.auth_info.token.unknown2 = random.randint(1,59)
             ticket_serialized = request.auth_info.SerializeToString()  #Sig uses this when no auth_ticket available
 
+
+        request.ms_since_last_locationfix = self.client.time_since_last_location_update(self,request,player_position)
         if self._signal_agglom_gen:
             sig = SignalAgglomUpdates()
 
@@ -214,7 +216,6 @@ class RpcApi:
             
             
             self.client.fill_signal(self,sig,request,player_position)
-
             signal_agglom_proto = sig.SerializeToString()
 
             sig_request = SendEncryptedSignatureRequest()
@@ -224,8 +225,7 @@ class RpcApi:
             plat.request_message = sig_request.SerializeToString()
 
     
-        request.ms_since_last_locationfix = int(random.triangular(100, 10000, 1000))
-
+        
         self.log.debug('Generated protobuf request: \n\r%s', request)
 
         return request

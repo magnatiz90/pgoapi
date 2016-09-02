@@ -131,7 +131,8 @@ class DefaultClient:
                 sig.ios_device_info.bool5 = True
         else:
             sig.ios_device_info.bool5 = True
-            
+    def time_since_last_location_update(self,api,request,player_position):
+        return int(random.triangular(100, 10000, 1000))
             
 class PGoApi:
 
